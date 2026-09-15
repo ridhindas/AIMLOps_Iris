@@ -36,7 +36,7 @@ jobs:
           cache: pip
 
       # ============================================================
-      # 3. Install Python dependencies
+      # 3. Install dependencies
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -45,7 +45,25 @@ jobs:
           pip install -r requirements-dev.txt
 
       # ============================================================
-      # 4. Build Docker image
+      # 4. Create temporary security-report directories
+      # ============================================================
+      - name: Prepare Security Report Directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy"
+          mkdir -p "$RUNNER_TEMP/zap"
+
+          chmod 777 "$RUNNER_TEMP/trivy"
+          chmod 777 "$RUNNER_TEMP/zap"
+
+          echo "TRIVY_DIR=$RUNNER_TEMP/trivy" >> "$GITHUB_ENV"
+          echo "ZAP_DIR=$RUNNER_TEMP/zap" >> "$GITHUB_ENV"
+
+          echo "===== SECURITY DIRECTORIES ====="
+          ls -ld "$RUNNER_TEMP/trivy"
+          ls -ld "$RUNNER_TEMP/zap"
+
+      # ============================================================
+      # 5. Build Docker image
       # ============================================================
       - name: Build Docker Image
         run: |
@@ -58,30 +76,26 @@ jobs:
           docker images iris-mlops-api:latest
 
       # ============================================================
-      # 5. Export Docker image
-      #    This allows containerized Trivy to scan the image
-      #    without depending on Docker image visibility.
+      # 6. Export Docker image
       # ============================================================
       - name: Export Docker Image
         run: |
-          mkdir -p security/trivy
-
           docker save \
-            -o security/trivy/iris-mlops-api.tar \
+            -o "$TRIVY_DIR/iris-mlops-api.tar" \
             iris-mlops-api:latest
 
           echo "===== IMAGE ARCHIVE ====="
-          ls -lh security/trivy/iris-mlops-api.tar
+          ls -lh "$TRIVY_DIR/iris-mlops-api.tar"
 
       # ============================================================
-      # 6. Trivy vulnerability scan
+      # 7. Trivy image vulnerability scan
       # ============================================================
       - name: Trivy Image Scan
         run: |
-          echo "===== STARTING TRIVY SCAN ====="
+          echo "===== STARTING TRIVY ====="
 
           docker run --rm \
-            -v "${{ github.workspace }}/security/trivy:/scan:ro" \
+            -v "$TRIVY_DIR:/scan:ro" \
             aquasec/trivy:latest \
             image \
             --input /scan/iris-mlops-api.tar \
@@ -93,15 +107,15 @@ jobs:
           echo "===== TRIVY SCAN COMPLETED ====="
 
       # ============================================================
-      # 7. Generate Trivy JSON report
+      # 8. Generate Trivy JSON report
       # ============================================================
       - name: Generate Trivy JSON Report
         if: always()
         run: |
-          echo "===== GENERATING TRIVY JSON REPORT ====="
+          echo "===== GENERATING TRIVY JSON ====="
 
           docker run --rm \
-            -v "${{ github.workspace }}/security/trivy:/scan:rw" \
+            -v "$TRIVY_DIR:/scan:rw" \
             aquasec/trivy:latest \
             image \
             --input /scan/iris-mlops-api.tar \
@@ -110,31 +124,31 @@ jobs:
             --output /scan/iris-mlops-api.json
 
           echo "===== TRIVY REPORT ====="
-          ls -lah security/trivy/
+          ls -lah "$TRIVY_DIR"
 
       # ============================================================
-      # 8. Upload Trivy report
+      # 9. Upload Trivy report
       # ============================================================
       - name: Upload Trivy Report
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: trivy-image-report
-          path: security/trivy/iris-mlops-api.json
+          path: ${{ runner.temp }}/trivy/iris-mlops-api.json
           if-no-files-found: warn
 
       # ============================================================
-      # 9. Remove temporary Trivy image archive
+      # 10. Remove temporary Trivy image
       # ============================================================
       - name: Remove Trivy Image Archive
         if: always()
         run: |
-          rm -f security/trivy/iris-mlops-api.tar
+          rm -f "$TRIVY_DIR/iris-mlops-api.tar"
 
-          echo "Temporary Trivy image archive removed."
+          echo "Temporary image archive removed."
 
       # ============================================================
-      # 10. Create Docker network
+      # 11. Create Docker network
       # ============================================================
       - name: Create Test Network
         run: |
@@ -146,7 +160,7 @@ jobs:
           docker network inspect iris-test-network
 
       # ============================================================
-      # 11. Start Iris API container
+      # 12. Start Iris API
       # ============================================================
       - name: Deploy Container
         run: |
@@ -162,7 +176,7 @@ jobs:
           docker ps -a
 
       # ============================================================
-      # 12. Wait for application
+      # 13. Wait for application
       # ============================================================
       - name: Wait for Application
         run: |
@@ -189,7 +203,7 @@ jobs:
 
           echo "ERROR: Iris API failed to start."
 
-          echo "===== DOCKER CONTAINERS ====="
+          echo "===== CONTAINERS ====="
           docker ps -a
 
           echo "===== API LOGS ====="
@@ -198,12 +212,10 @@ jobs:
           exit 1
 
       # ============================================================
-      # 13. Health check
+      # 14. Health check
       # ============================================================
       - name: Health Check
         run: |
-          echo "===== HEALTH CHECK ====="
-
           response=$(docker run --rm \
             --network iris-test-network \
             curlimages/curl:latest \
@@ -219,12 +231,10 @@ jobs:
           echo "Health check passed."
 
       # ============================================================
-      # 14. Prediction API test
+      # 15. Prediction API test
       # ============================================================
       - name: Prediction API Check
         run: |
-          echo "===== PREDICTION TEST ====="
-
           response=$(docker run --rm \
             --network iris-test-network \
             curlimages/curl:latest \
@@ -242,23 +252,19 @@ jobs:
           echo "Prediction test passed."
 
       # ============================================================
-      # 15. OWASP ZAP baseline DAST scan
+      # 16. OWASP ZAP baseline DAST
       # ============================================================
       - name: OWASP ZAP Baseline Scan
         if: always()
         continue-on-error: true
         run: |
-          mkdir -p security/zap
-
-          chmod 777 security/zap
-
-          echo "===== CHECKING DOCKER NETWORK ====="
+          echo "===== CHECKING NETWORK ====="
           docker network inspect iris-test-network
 
-          echo "===== CHECKING API CONTAINER ====="
+          echo "===== CHECKING API ====="
           docker ps -a
 
-          echo "===== CHECKING API HEALTH FROM ZAP NETWORK ====="
+          echo "===== API HEALTH ====="
 
           docker run --rm \
             --network iris-test-network \
@@ -273,7 +279,7 @@ jobs:
 
           docker run --rm \
             --network iris-test-network \
-            -v "${{ github.workspace }}/security/zap:/zap/wrk:rw" \
+            -v "$ZAP_DIR:/zap/wrk:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
             -t http://iris-api:8000 \
@@ -281,11 +287,11 @@ jobs:
             -J /zap/wrk/zap-report.json \
             -I
 
-          echo "===== ZAP REPORT FILES ====="
-          ls -lah security/zap/
+          echo "===== ZAP REPORTS ====="
+          ls -lah "$ZAP_DIR"
 
       # ============================================================
-      # 16. Upload ZAP reports
+      # 17. Upload ZAP reports
       # ============================================================
       - name: Upload ZAP Reports
         if: always()
@@ -293,12 +299,12 @@ jobs:
         with:
           name: zap-baseline-report
           path: |
-            security/zap/zap-report.html
-            security/zap/zap-report.json
+            ${{ runner.temp }}/zap/zap-report.html
+            ${{ runner.temp }}/zap/zap-report.json
           if-no-files-found: warn
 
       # ============================================================
-      # 17. Show application status and logs
+      # 18. Container status and logs
       # ============================================================
       - name: Container Status and Logs
         if: always()
@@ -315,7 +321,7 @@ jobs:
           docker logs iris-api 2>/dev/null || true
 
       # ============================================================
-      # 18. Cleanup
+      # 19. Cleanup
       # ============================================================
       - name: Cleanup
         if: always()
@@ -326,5 +332,7 @@ jobs:
           docker rm iris-api 2>/dev/null || true
 
           docker network rm iris-test-network 2>/dev/null || true
+
+          rm -rf "$TRIVY_DIR" "$ZAP_DIR" 2>/dev/null || true
 
           echo "Cleanup completed."
