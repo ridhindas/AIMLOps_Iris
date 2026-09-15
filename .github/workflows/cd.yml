@@ -36,7 +36,7 @@ jobs:
           cache: pip
 
       # ============================================================
-      # 3. Install dependencies
+      # 3. Install Python dependencies
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -53,29 +53,44 @@ jobs:
             --tag iris-mlops-api:latest \
             .
 
-      # ============================================================
-      # 5. Verify image
-      # ============================================================
-      - name: Verify Docker Image
-        run: |
+          echo "===== DOCKER IMAGE ====="
           docker image inspect iris-mlops-api:latest
           docker images iris-mlops-api:latest
 
       # ============================================================
-      # 6. Trivy image scan
+      # 5. Export Docker image
+      #    This allows containerized Trivy to scan the image
+      #    without depending on Docker image visibility.
       # ============================================================
-      - name: Trivy Image Scan
+      - name: Export Docker Image
         run: |
           mkdir -p security/trivy
 
+          docker save \
+            -o security/trivy/iris-mlops-api.tar \
+            iris-mlops-api:latest
+
+          echo "===== IMAGE ARCHIVE ====="
+          ls -lh security/trivy/iris-mlops-api.tar
+
+      # ============================================================
+      # 6. Trivy vulnerability scan
+      # ============================================================
+      - name: Trivy Image Scan
+        run: |
+          echo "===== STARTING TRIVY SCAN ====="
+
           docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${{ github.workspace }}/security/trivy:/scan:ro" \
             aquasec/trivy:latest \
             image \
+            --input /scan/iris-mlops-api.tar \
+            --scanners vuln \
             --severity HIGH,CRITICAL \
             --exit-code 0 \
-            --format table \
-            iris-mlops-api:latest
+            --format table
+
+          echo "===== TRIVY SCAN COMPLETED ====="
 
       # ============================================================
       # 7. Generate Trivy JSON report
@@ -83,16 +98,16 @@ jobs:
       - name: Generate Trivy JSON Report
         if: always()
         run: |
-          mkdir -p security/trivy
+          echo "===== GENERATING TRIVY JSON REPORT ====="
 
           docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${{ github.workspace }}/security/trivy:/reports" \
+            -v "${{ github.workspace }}/security/trivy:/scan:rw" \
             aquasec/trivy:latest \
             image \
+            --input /scan/iris-mlops-api.tar \
+            --scanners vuln \
             --format json \
-            --output /reports/iris-mlops-api.json \
-            iris-mlops-api:latest
+            --output /scan/iris-mlops-api.json
 
           echo "===== TRIVY REPORT ====="
           ls -lah security/trivy/
@@ -109,18 +124,29 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 9. Create Docker network
+      # 9. Remove temporary Trivy image archive
+      # ============================================================
+      - name: Remove Trivy Image Archive
+        if: always()
+        run: |
+          rm -f security/trivy/iris-mlops-api.tar
+
+          echo "Temporary Trivy image archive removed."
+
+      # ============================================================
+      # 10. Create Docker network
       # ============================================================
       - name: Create Test Network
         run: |
           docker network rm iris-test-network 2>/dev/null || true
+
           docker network create iris-test-network
 
           echo "===== DOCKER NETWORK ====="
           docker network inspect iris-test-network
 
       # ============================================================
-      # 10. Start Iris API
+      # 11. Start Iris API container
       # ============================================================
       - name: Deploy Container
         run: |
@@ -136,7 +162,7 @@ jobs:
           docker ps -a
 
       # ============================================================
-      # 11. Wait for API
+      # 12. Wait for application
       # ============================================================
       - name: Wait for Application
         run: |
@@ -172,11 +198,11 @@ jobs:
           exit 1
 
       # ============================================================
-      # 12. Health check
+      # 13. Health check
       # ============================================================
       - name: Health Check
         run: |
-          echo "Checking /health..."
+          echo "===== HEALTH CHECK ====="
 
           response=$(docker run --rm \
             --network iris-test-network \
@@ -193,11 +219,11 @@ jobs:
           echo "Health check passed."
 
       # ============================================================
-      # 13. Prediction test
+      # 14. Prediction API test
       # ============================================================
       - name: Prediction API Check
         run: |
-          echo "Testing /predict..."
+          echo "===== PREDICTION TEST ====="
 
           response=$(docker run --rm \
             --network iris-test-network \
@@ -216,13 +242,14 @@ jobs:
           echo "Prediction test passed."
 
       # ============================================================
-      # 14. OWASP ZAP baseline DAST
+      # 15. OWASP ZAP baseline DAST scan
       # ============================================================
       - name: OWASP ZAP Baseline Scan
         if: always()
         continue-on-error: true
         run: |
           mkdir -p security/zap
+
           chmod 777 security/zap
 
           echo "===== CHECKING DOCKER NETWORK ====="
@@ -231,7 +258,7 @@ jobs:
           echo "===== CHECKING API CONTAINER ====="
           docker ps -a
 
-          echo "===== CHECKING API HEALTH ====="
+          echo "===== CHECKING API HEALTH FROM ZAP NETWORK ====="
 
           docker run --rm \
             --network iris-test-network \
@@ -241,6 +268,7 @@ jobs:
             http://iris-api:8000/health
 
           echo ""
+
           echo "===== STARTING OWASP ZAP ====="
 
           docker run --rm \
@@ -257,7 +285,7 @@ jobs:
           ls -lah security/zap/
 
       # ============================================================
-      # 15. Upload ZAP reports
+      # 16. Upload ZAP reports
       # ============================================================
       - name: Upload ZAP Reports
         if: always()
@@ -270,7 +298,7 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 16. Show application status and logs
+      # 17. Show application status and logs
       # ============================================================
       - name: Container Status and Logs
         if: always()
@@ -287,7 +315,7 @@ jobs:
           docker logs iris-api 2>/dev/null || true
 
       # ============================================================
-      # 17. Cleanup
+      # 18. Cleanup
       # ============================================================
       - name: Cleanup
         if: always()
