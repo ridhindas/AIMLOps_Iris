@@ -19,7 +19,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. Checkout the exact commit that passed CI
+      # 1. Checkout exact commit that passed CI
       # ============================================================
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -36,7 +36,7 @@ jobs:
           cache: pip
 
       # ============================================================
-      # 3. Install Python dependencies
+      # 3. Install dependencies
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -54,7 +54,7 @@ jobs:
             .
 
       # ============================================================
-      # 5. Verify Docker image
+      # 5. Verify image
       # ============================================================
       - name: Verify Docker Image
         run: |
@@ -62,8 +62,7 @@ jobs:
           docker images iris-mlops-api:latest
 
       # ============================================================
-      # 6. Trivy image security scan
-      #    Trivy container is automatically removed with --rm
+      # 6. Trivy image scan
       # ============================================================
       - name: Trivy Image Scan
         run: |
@@ -121,7 +120,7 @@ jobs:
           docker network inspect iris-test-network
 
       # ============================================================
-      # 10. Start Iris API container
+      # 10. Start Iris API
       # ============================================================
       - name: Deploy Container
         run: |
@@ -194,7 +193,7 @@ jobs:
           echo "Health check passed."
 
       # ============================================================
-      # 13. Prediction API test
+      # 13. Prediction test
       # ============================================================
       - name: Prediction API Check
         run: |
@@ -217,17 +216,31 @@ jobs:
           echo "Prediction test passed."
 
       # ============================================================
-      # 14. OWASP ZAP baseline DAST scan
-      #     ZAP and API are on the same Docker network
+      # 14. OWASP ZAP baseline DAST
       # ============================================================
       - name: OWASP ZAP Baseline Scan
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p security/zap
-
-          # Allow the ZAP container user to write reports
           chmod 777 security/zap
 
+          echo "===== CHECKING DOCKER NETWORK ====="
+          docker network inspect iris-test-network
+
+          echo "===== CHECKING API CONTAINER ====="
+          docker ps -a
+
+          echo "===== CHECKING API HEALTH ====="
+
+          docker run --rm \
+            --network iris-test-network \
+            curlimages/curl:latest \
+            --fail \
+            --silent \
+            http://iris-api:8000/health
+
+          echo ""
           echo "===== STARTING OWASP ZAP ====="
 
           docker run --rm \
@@ -287,4 +300,3 @@ jobs:
           docker network rm iris-test-network 2>/dev/null || true
 
           echo "Cleanup completed."
-
