@@ -23,13 +23,13 @@ steps:
   # Checkout
   # ---------------------------------------------
   - name: Checkout Repository
-    uses: actions/checkout@v4
+    uses: actions/checkout@v5
 
   # ---------------------------------------------
   # Python 3.11
   # ---------------------------------------------
   - name: Set up Python
-    uses: actions/setup-python@v5
+    uses: actions/setup-python@v6
     with:
       python-version: "3.11"
       cache: pip
@@ -82,7 +82,7 @@ steps:
   # ---------------------------------------------
   - name: Upload Bandit Report
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v5
     with:
       name: bandit-report
       path: security/bandit/bandit-report.json
@@ -105,7 +105,7 @@ steps:
   # ---------------------------------------------
   - name: Upload pip-audit Report
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v5
     with:
       name: pip-audit-report
       path: security/pip-audit/pip-audit-report.json
@@ -123,7 +123,7 @@ steps:
   # Upload trained model as CI artifact
   # ---------------------------------------------
   - name: Upload Model Artifact
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v5
     with:
       name: iris-model
       path: models/model.pkl
