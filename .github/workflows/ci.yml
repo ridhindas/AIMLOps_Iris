@@ -1,55 +1,130 @@
 name: MLOps CI
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-
-  pull_request:
-    branches:
-      - main
+push:
+branches:
+- main
+pull_request:
+branches:
+- main
 
 permissions:
-  contents: read
+contents: read
 
 jobs:
+test:
+name: Test and Validate Model
+runs-on: ubuntu-latest
 
-  test-and-train:
+```
+steps:
 
-    name: Train Model and Test
-    runs-on: ubuntu-latest
+  # ---------------------------------------------
+  # Checkout
+  # ---------------------------------------------
+  - name: Checkout Repository
+    uses: actions/checkout@v4
 
-    steps:
+  # ---------------------------------------------
+  # Python 3.11
+  # ---------------------------------------------
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
+      cache: pip
 
-      - name: Checkout Code
-        uses: actions/checkout@v4
+  # ---------------------------------------------
+  # Install dependencies
+  # ---------------------------------------------
+  - name: Install Dependencies
+    run: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+      pip install -r requirements-dev.txt
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+  # ---------------------------------------------
+  # Train / generate model
+  # ---------------------------------------------
+  - name: Train Model
+    run: |
+      python retrain.py
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+  # ---------------------------------------------
+  # Validate model accuracy
+  # ---------------------------------------------
+  - name: Validate Model
+    run: |
+      python validate_model.py
 
-      - name: Train Model
-        run: |
-          python retrain.py
+  # ---------------------------------------------
+  # Run application tests
+  # ---------------------------------------------
+  - name: Run Tests
+    run: |
+      pytest -v
 
-      - name: Validate Model
-        run: |
-          python validate_model.py
+  # ---------------------------------------------
+  # Bandit source-code security scan
+  # ---------------------------------------------
+  - name: Bandit Security Scan
+    run: |
+      mkdir -p security/bandit
 
-      - name: Run Tests
-        run: |
-          pytest -v
+      python -m bandit \
+        -r . \
+        -x ./venv,./tests \
+        -f json \
+        -o security/bandit/bandit-report.json
 
-      - name: Upload Model
-        uses: actions/upload-artifact@v4
-        with:
-          name: trained-model
-          path: models/model.pkl
+  # ---------------------------------------------
+  # Upload Bandit report
+  # ---------------------------------------------
+  - name: Upload Bandit Report
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: bandit-report
+      path: security/bandit/bandit-report.json
+      if-no-files-found: warn
+
+  # ---------------------------------------------
+  # Dependency vulnerability scan
+  # ---------------------------------------------
+  - name: pip-audit
+    run: |
+      mkdir -p security/pip-audit
+
+      pip-audit \
+        -r requirements.txt \
+        -f json \
+        -o security/pip-audit/pip-audit-report.json
+
+  # ---------------------------------------------
+  # Upload pip-audit report
+  # ---------------------------------------------
+  - name: Upload pip-audit Report
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: pip-audit-report
+      path: security/pip-audit/pip-audit-report.json
+      if-no-files-found: warn
+
+  # ---------------------------------------------
+  # Verify model exists
+  # ---------------------------------------------
+  - name: Verify Model Artifact
+    run: |
+      test -f models/model.pkl
+      ls -lh models/model.pkl
+
+  # ---------------------------------------------
+  # Upload trained model as CI artifact
+  # ---------------------------------------------
+  - name: Upload Model Artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: iris-model
+      path: models/model.pkl
+```
