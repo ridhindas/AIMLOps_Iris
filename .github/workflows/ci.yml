@@ -1,130 +1,105 @@
 name: MLOps CI
 
-"on":
-push:
-branches:
-- main
-pull_request:
-branches:
-- main
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-test:
-name: Test and Validate Model
-runs-on: ubuntu-latest
+  test:
+    name: Test and Validate Model
+    runs-on: ubuntu-latest
 
-```
-steps:
+    steps:
 
-  # ---------------------------------------------
-  # Checkout
-  # ---------------------------------------------
-  - name: Checkout Repository
-    uses: actions/checkout@v4
+      # Checkout
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-  # ---------------------------------------------
-  # Python 3.11
-  # ---------------------------------------------
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.11"
-      cache: pip
+      # Python 3.11
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
-  # ---------------------------------------------
-  # Install dependencies
-  # ---------------------------------------------
-  - name: Install Dependencies
-    run: |
-      python -m pip install --upgrade pip
-      pip install -r requirements.txt
-      pip install -r requirements-dev.txt
+      # Install dependencies
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
-  # ---------------------------------------------
-  # Train / generate model
-  # ---------------------------------------------
-  - name: Train Model
-    run: |
-      python retrain.py
+      # Train model
+      - name: Train Model
+        run: |
+          python retrain.py
 
-  # ---------------------------------------------
-  # Validate model accuracy
-  # ---------------------------------------------
-  - name: Validate Model
-    run: |
-      python validate_model.py
+      # Validate model
+      - name: Validate Model
+        run: |
+          python validate_model.py
 
-  # ---------------------------------------------
-  # Run application tests
-  # ---------------------------------------------
-  - name: Run Tests
-    run: |
-      pytest -v
+      # Run tests
+      - name: Run Tests
+        run: |
+          pytest -v
 
-  # ---------------------------------------------
-  # Bandit source-code security scan
-  # ---------------------------------------------
-  - name: Bandit Security Scan
-    run: |
-      mkdir -p security/bandit
+      # Bandit security scan
+      - name: Bandit Security Scan
+        run: |
+          mkdir -p security/bandit
 
-      python -m bandit \
-        -r . \
-        -x ./venv,./tests \
-        -f json \
-        -o security/bandit/bandit-report.json
+          python -m bandit \
+            -r . \
+            -x ./venv,./tests \
+            -f json \
+            -o security/bandit/bandit-report.json
 
-  # ---------------------------------------------
-  # Upload Bandit report
-  # ---------------------------------------------
-  - name: Upload Bandit Report
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: bandit-report
-      path: security/bandit/bandit-report.json
-      if-no-files-found: warn
+      # Upload Bandit report
+      - name: Upload Bandit Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: security/bandit/bandit-report.json
+          if-no-files-found: warn
 
-  # ---------------------------------------------
-  # Dependency vulnerability scan
-  # ---------------------------------------------
-  - name: pip-audit
-    run: |
-      mkdir -p security/pip-audit
+      # Dependency vulnerability scan
+      - name: pip-audit
+        run: |
+          mkdir -p security/pip-audit
 
-      pip-audit \
-        -r requirements.txt \
-        -f json \
-        -o security/pip-audit/pip-audit-report.json
+          pip-audit \
+            -r requirements.txt \
+            -f json \
+            -o security/pip-audit/pip-audit-report.json
 
-  # ---------------------------------------------
-  # Upload pip-audit report
-  # ---------------------------------------------
-  - name: Upload pip-audit Report
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: pip-audit-report
-      path: security/pip-audit/pip-audit-report.json
-      if-no-files-found: warn
+      # Upload pip-audit report
+      - name: Upload pip-audit Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: security/pip-audit/pip-audit-report.json
+          if-no-files-found: warn
 
-  # ---------------------------------------------
-  # Verify model exists
-  # ---------------------------------------------
-  - name: Verify Model Artifact
-    run: |
-      test -f models/model.pkl
-      ls -lh models/model.pkl
+      # Verify model
+      - name: Verify Model Artifact
+        run: |
+          test -f models/model.pkl
+          ls -lh models/model.pkl
 
-  # ---------------------------------------------
-  # Upload trained model as CI artifact
-  # ---------------------------------------------
-  - name: Upload Model Artifact
-    uses: actions/upload-artifact@v4
-    with:
-      name: iris-model
-      path: models/model.pkl
-```
+      # Upload trained model
+      - name: Upload Model Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-model
+          path: models/model.pkl
