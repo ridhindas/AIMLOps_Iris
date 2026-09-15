@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+models/model.pkl
+
+security/bandit/*
+security/trivy/*
+security/zap/*
+
+data/raw/*
+data/processed/*
