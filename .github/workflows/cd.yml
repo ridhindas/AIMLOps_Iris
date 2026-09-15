@@ -36,7 +36,7 @@ jobs:
           cache: pip
 
       # ============================================================
-      # 3. Install Python dependencies
+      # 3. Install dependencies
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       # ============================================================
-      # 4. Prepare temporary security report directories
+      # 4. Prepare security report directories
       # ============================================================
       - name: Prepare Security Report Directories
         run: |
@@ -63,7 +63,40 @@ jobs:
           ls -ld "$RUNNER_TEMP/zap"
 
       # ============================================================
-      # 5. Build Docker image
+      # 5. Train model
+      #
+      # This creates:
+      # models/model.pkl
+      #
+      # Required by Dockerfile:
+      # COPY models/ models/
+      # ============================================================
+      - name: Train Model
+        run: |
+          echo "===== TRAINING MODEL ====="
+
+          python retrain.py
+
+          echo "===== MODEL DIRECTORY ====="
+          ls -lah models/
+
+          test -f models/model.pkl
+
+          echo "Model artifact created successfully."
+
+      # ============================================================
+      # 6. Validate model
+      # ============================================================
+      - name: Validate Model
+        run: |
+          echo "===== VALIDATING MODEL ====="
+
+          python validate_model.py
+
+          echo "Model validation completed."
+
+      # ============================================================
+      # 7. Build Docker image
       # ============================================================
       - name: Build Docker Image
         run: |
@@ -74,11 +107,13 @@ jobs:
             .
 
           echo "===== DOCKER IMAGE ====="
+
           docker image inspect iris-mlops-api:latest
+
           docker images iris-mlops-api:latest
 
       # ============================================================
-      # 6. Export Docker image for Trivy
+      # 8. Export Docker image for Trivy
       # ============================================================
       - name: Export Docker Image
         run: |
@@ -89,11 +124,13 @@ jobs:
             iris-mlops-api:latest
 
           echo "===== IMAGE ARCHIVE ====="
+
           ls -lh "$TRIVY_DIR/iris-mlops-api.tar"
 
+          test -f "$TRIVY_DIR/iris-mlops-api.tar"
+
       # ============================================================
-      # 7. Trivy vulnerability scan
-      #    Trivy runs inside a temporary Docker container.
+      # 9. Trivy vulnerability scan
       # ============================================================
       - name: Trivy Image Scan
         run: |
@@ -112,12 +149,18 @@ jobs:
           echo "===== TRIVY SCAN COMPLETED ====="
 
       # ============================================================
-      # 8. Generate Trivy JSON report
+      # 10. Generate Trivy JSON report
       # ============================================================
       - name: Generate Trivy JSON Report
         if: always()
         run: |
           echo "===== GENERATING TRIVY JSON REPORT ====="
+
+          if [ ! -f "$TRIVY_DIR/iris-mlops-api.tar" ]; then
+            echo "WARNING: Docker image archive does not exist."
+            echo "Skipping Trivy JSON generation."
+            exit 0
+          fi
 
           docker run --rm \
             -v "$TRIVY_DIR:/scan:rw" \
@@ -129,10 +172,11 @@ jobs:
             --output /scan/iris-mlops-api.json
 
           echo "===== TRIVY REPORT ====="
+
           ls -lah "$TRIVY_DIR"
 
       # ============================================================
-      # 9. Upload Trivy report
+      # 11. Upload Trivy report
       # ============================================================
       - name: Upload Trivy Report
         if: always()
@@ -143,7 +187,7 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 10. Remove temporary Trivy image archive
+      # 12. Remove temporary Trivy archive
       # ============================================================
       - name: Remove Trivy Image Archive
         if: always()
@@ -153,7 +197,7 @@ jobs:
           echo "Temporary Trivy image archive removed."
 
       # ============================================================
-      # 11. Create application Docker network
+      # 13. Create application network
       # ============================================================
       - name: Create Application Network
         run: |
@@ -164,10 +208,11 @@ jobs:
           docker network create iris-test-network
 
           echo "===== APPLICATION NETWORK ====="
+
           docker network inspect iris-test-network
 
       # ============================================================
-      # 12. Start Iris API container
+      # 14. Start Iris API
       # ============================================================
       - name: Deploy Container
         run: |
@@ -182,10 +227,11 @@ jobs:
             iris-mlops-api:latest
 
           echo "===== API CONTAINER ====="
+
           docker ps -a
 
       # ============================================================
-      # 13. Wait for application
+      # 15. Wait for application
       # ============================================================
       - name: Wait for Application
         run: |
@@ -202,10 +248,12 @@ jobs:
 
               echo ""
               echo "Iris API is ready."
+
               exit 0
             fi
 
             echo "Attempt $i: API not ready."
+
             sleep 3
 
           done
@@ -213,15 +261,17 @@ jobs:
           echo "ERROR: Iris API failed to start."
 
           echo "===== DOCKER CONTAINERS ====="
+
           docker ps -a
 
           echo "===== API LOGS ====="
+
           docker logs iris-api || true
 
           exit 1
 
       # ============================================================
-      # 14. Health check
+      # 16. Health check
       # ============================================================
       - name: Health Check
         run: |
@@ -237,12 +287,13 @@ jobs:
           echo "$response"
 
           echo "$response" | grep -q '"status":"healthy"'
+
           echo "$response" | grep -q '"model_loaded":true'
 
           echo "Health check passed."
 
       # ============================================================
-      # 15. Prediction API test
+      # 17. Prediction API test
       # ============================================================
       - name: Prediction API Check
         run: |
@@ -265,10 +316,7 @@ jobs:
           echo "Prediction test passed."
 
       # ============================================================
-      # 16. OWASP ZAP baseline DAST
-      #
-      #     A dedicated network is created for ZAP.
-      #     iris-api is connected to that network.
+      # 18. OWASP ZAP baseline DAST
       # ============================================================
       - name: OWASP ZAP Baseline Scan
         if: always()
@@ -281,7 +329,9 @@ jobs:
           # --------------------------------------------------------
           if ! docker ps -a --format '{{.Names}}' | grep -q '^iris-api$'; then
             echo "ERROR: iris-api container does not exist."
+
             docker ps -a
+
             exit 1
           fi
 
@@ -290,13 +340,14 @@ jobs:
           # --------------------------------------------------------
           if ! docker ps --format '{{.Names}}' | grep -q '^iris-api$'; then
             echo "API container is not running."
+
             echo "Starting iris-api..."
 
             docker start iris-api
           fi
 
           # --------------------------------------------------------
-          # Remove any stale ZAP network
+          # Remove stale ZAP network
           # --------------------------------------------------------
           docker network rm zap-test-network 2>/dev/null || true
 
@@ -306,6 +357,7 @@ jobs:
           docker network create zap-test-network
 
           echo "===== ZAP NETWORK ====="
+
           docker network inspect zap-test-network
 
           # --------------------------------------------------------
@@ -318,10 +370,11 @@ jobs:
             iris-api 2>/dev/null || true
 
           echo "===== NETWORK MEMBERS ====="
+
           docker network inspect zap-test-network
 
           # --------------------------------------------------------
-          # Verify API from ZAP network
+          # Test API from ZAP network
           # --------------------------------------------------------
           echo "===== TESTING API FROM ZAP NETWORK ====="
 
@@ -333,19 +386,22 @@ jobs:
             http://iris-api:8000/health
 
           echo ""
+
           echo "API is accessible from ZAP network."
 
           # --------------------------------------------------------
           # Prepare writable ZAP directory
           # --------------------------------------------------------
           mkdir -p "$ZAP_DIR"
+
           chmod 777 "$ZAP_DIR"
 
           echo "===== ZAP REPORT DIRECTORY ====="
+
           ls -ld "$ZAP_DIR"
 
           # --------------------------------------------------------
-          # Run ZAP
+          # Run OWASP ZAP
           # --------------------------------------------------------
           echo "===== STARTING OWASP ZAP ====="
 
@@ -360,10 +416,11 @@ jobs:
             -I
 
           echo "===== ZAP REPORTS ====="
+
           ls -lah "$ZAP_DIR"
 
       # ============================================================
-      # 17. Upload ZAP reports
+      # 19. Upload ZAP reports
       # ============================================================
       - name: Upload ZAP Reports
         if: always()
@@ -376,39 +433,44 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 18. Show containers, networks and application logs
+      # 20. Container status and logs
       # ============================================================
       - name: Container Status and Logs
         if: always()
         run: |
           echo "===== DOCKER CONTAINERS ====="
+
           docker ps -a
 
           echo ""
           echo "===== APPLICATION NETWORK ====="
+
           docker network inspect iris-test-network || true
 
           echo ""
           echo "===== ZAP NETWORK ====="
+
           docker network inspect zap-test-network || true
 
           echo ""
           echo "===== APPLICATION LOGS ====="
+
           docker logs iris-api 2>/dev/null || true
 
           echo ""
           echo "===== ZAP REPORT DIRECTORY ====="
+
           ls -lah "$ZAP_DIR" 2>/dev/null || true
 
       # ============================================================
-      # 19. Final cleanup
+      # 21. Final cleanup
       # ============================================================
       - name: Cleanup
         if: always()
         run: |
           echo "===== FINAL CLEANUP ====="
 
-          # Stop and remove application container
+          # Stop and remove API
           docker stop iris-api 2>/dev/null || true
           docker rm iris-api 2>/dev/null || true
 
