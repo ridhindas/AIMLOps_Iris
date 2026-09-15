@@ -36,7 +36,7 @@ jobs:
           cache: pip
 
       # ============================================================
-      # 3. Install dependencies
+      # 3. Install Python dependencies
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       # ============================================================
-      # 4. Create temporary security-report directories
+      # 4. Prepare temporary security report directories
       # ============================================================
       - name: Prepare Security Report Directories
         run: |
@@ -67,6 +67,8 @@ jobs:
       # ============================================================
       - name: Build Docker Image
         run: |
+          echo "===== BUILDING DOCKER IMAGE ====="
+
           docker build \
             --tag iris-mlops-api:latest \
             .
@@ -76,10 +78,12 @@ jobs:
           docker images iris-mlops-api:latest
 
       # ============================================================
-      # 6. Export Docker image
+      # 6. Export Docker image for Trivy
       # ============================================================
       - name: Export Docker Image
         run: |
+          echo "===== EXPORTING DOCKER IMAGE ====="
+
           docker save \
             -o "$TRIVY_DIR/iris-mlops-api.tar" \
             iris-mlops-api:latest
@@ -88,7 +92,8 @@ jobs:
           ls -lh "$TRIVY_DIR/iris-mlops-api.tar"
 
       # ============================================================
-      # 7. Trivy image vulnerability scan
+      # 7. Trivy vulnerability scan
+      #    Trivy runs inside a temporary Docker container.
       # ============================================================
       - name: Trivy Image Scan
         run: |
@@ -112,7 +117,7 @@ jobs:
       - name: Generate Trivy JSON Report
         if: always()
         run: |
-          echo "===== GENERATING TRIVY JSON ====="
+          echo "===== GENERATING TRIVY JSON REPORT ====="
 
           docker run --rm \
             -v "$TRIVY_DIR:/scan:rw" \
@@ -138,32 +143,36 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 10. Remove temporary Trivy image
+      # 10. Remove temporary Trivy image archive
       # ============================================================
       - name: Remove Trivy Image Archive
         if: always()
         run: |
           rm -f "$TRIVY_DIR/iris-mlops-api.tar"
 
-          echo "Temporary image archive removed."
+          echo "Temporary Trivy image archive removed."
 
       # ============================================================
-      # 11. Create Docker network
+      # 11. Create application Docker network
       # ============================================================
-      - name: Create Test Network
+      - name: Create Application Network
         run: |
+          echo "===== CREATING APPLICATION NETWORK ====="
+
           docker network rm iris-test-network 2>/dev/null || true
 
           docker network create iris-test-network
 
-          echo "===== DOCKER NETWORK ====="
+          echo "===== APPLICATION NETWORK ====="
           docker network inspect iris-test-network
 
       # ============================================================
-      # 12. Start Iris API
+      # 12. Start Iris API container
       # ============================================================
       - name: Deploy Container
         run: |
+          echo "===== STARTING IRIS API ====="
+
           docker stop iris-api 2>/dev/null || true
           docker rm iris-api 2>/dev/null || true
 
@@ -180,7 +189,7 @@ jobs:
       # ============================================================
       - name: Wait for Application
         run: |
-          echo "Waiting for Iris API..."
+          echo "===== WAITING FOR IRIS API ====="
 
           for i in {1..20}; do
 
@@ -203,7 +212,7 @@ jobs:
 
           echo "ERROR: Iris API failed to start."
 
-          echo "===== CONTAINERS ====="
+          echo "===== DOCKER CONTAINERS ====="
           docker ps -a
 
           echo "===== API LOGS ====="
@@ -216,6 +225,8 @@ jobs:
       # ============================================================
       - name: Health Check
         run: |
+          echo "===== HEALTH CHECK ====="
+
           response=$(docker run --rm \
             --network iris-test-network \
             curlimages/curl:latest \
@@ -235,6 +246,8 @@ jobs:
       # ============================================================
       - name: Prediction API Check
         run: |
+          echo "===== PREDICTION API TEST ====="
+
           response=$(docker run --rm \
             --network iris-test-network \
             curlimages/curl:latest \
@@ -253,32 +266,91 @@ jobs:
 
       # ============================================================
       # 16. OWASP ZAP baseline DAST
+      #
+      #     A dedicated network is created for ZAP.
+      #     iris-api is connected to that network.
       # ============================================================
       - name: OWASP ZAP Baseline Scan
         if: always()
         continue-on-error: true
         run: |
-          echo "===== CHECKING NETWORK ====="
-          docker network inspect iris-test-network
+          echo "===== PREPARING ZAP ====="
 
-          echo "===== CHECKING API ====="
-          docker ps -a
+          # --------------------------------------------------------
+          # Verify API container exists
+          # --------------------------------------------------------
+          if ! docker ps -a --format '{{.Names}}' | grep -q '^iris-api$'; then
+            echo "ERROR: iris-api container does not exist."
+            docker ps -a
+            exit 1
+          fi
 
-          echo "===== API HEALTH ====="
+          # --------------------------------------------------------
+          # Verify API container is running
+          # --------------------------------------------------------
+          if ! docker ps --format '{{.Names}}' | grep -q '^iris-api$'; then
+            echo "API container is not running."
+            echo "Starting iris-api..."
+
+            docker start iris-api
+          fi
+
+          # --------------------------------------------------------
+          # Remove any stale ZAP network
+          # --------------------------------------------------------
+          docker network rm zap-test-network 2>/dev/null || true
+
+          # --------------------------------------------------------
+          # Create dedicated ZAP network
+          # --------------------------------------------------------
+          docker network create zap-test-network
+
+          echo "===== ZAP NETWORK ====="
+          docker network inspect zap-test-network
+
+          # --------------------------------------------------------
+          # Connect API to ZAP network
+          # --------------------------------------------------------
+          echo "===== CONNECTING API TO ZAP NETWORK ====="
+
+          docker network connect \
+            zap-test-network \
+            iris-api 2>/dev/null || true
+
+          echo "===== NETWORK MEMBERS ====="
+          docker network inspect zap-test-network
+
+          # --------------------------------------------------------
+          # Verify API from ZAP network
+          # --------------------------------------------------------
+          echo "===== TESTING API FROM ZAP NETWORK ====="
 
           docker run --rm \
-            --network iris-test-network \
+            --network zap-test-network \
             curlimages/curl:latest \
             --fail \
             --silent \
             http://iris-api:8000/health
 
           echo ""
+          echo "API is accessible from ZAP network."
 
+          # --------------------------------------------------------
+          # Prepare writable ZAP directory
+          # --------------------------------------------------------
+          mkdir -p "$ZAP_DIR"
+          chmod 777 "$ZAP_DIR"
+
+          echo "===== ZAP REPORT DIRECTORY ====="
+          ls -ld "$ZAP_DIR"
+
+          # --------------------------------------------------------
+          # Run ZAP
+          # --------------------------------------------------------
           echo "===== STARTING OWASP ZAP ====="
 
           docker run --rm \
-            --network iris-test-network \
+            --network zap-test-network \
             -v "$ZAP_DIR:/zap/wrk:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
@@ -304,7 +376,7 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 18. Container status and logs
+      # 18. Show containers, networks and application logs
       # ============================================================
       - name: Container Status and Logs
         if: always()
@@ -313,26 +385,38 @@ jobs:
           docker ps -a
 
           echo ""
-          echo "===== DOCKER NETWORK ====="
+          echo "===== APPLICATION NETWORK ====="
           docker network inspect iris-test-network || true
+
+          echo ""
+          echo "===== ZAP NETWORK ====="
+          docker network inspect zap-test-network || true
 
           echo ""
           echo "===== APPLICATION LOGS ====="
           docker logs iris-api 2>/dev/null || true
 
+          echo ""
+          echo "===== ZAP REPORT DIRECTORY ====="
+          ls -lah "$ZAP_DIR" 2>/dev/null || true
+
       # ============================================================
-      # 19. Cleanup
+      # 19. Final cleanup
       # ============================================================
       - name: Cleanup
         if: always()
         run: |
-          echo "===== CLEANUP ====="
+          echo "===== FINAL CLEANUP ====="
 
+          # Stop and remove application container
           docker stop iris-api 2>/dev/null || true
           docker rm iris-api 2>/dev/null || true
 
+          # Remove networks
+          docker network rm zap-test-network 2>/dev/null || true
           docker network rm iris-test-network 2>/dev/null || true
 
+          # Remove temporary security directories
           rm -rf "$TRIVY_DIR" "$ZAP_DIR" 2>/dev/null || true
 
           echo "Cleanup completed."
