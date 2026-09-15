@@ -1,9 +1,9 @@
 name: MLOps CD
 
-"on":
+on:
   workflow_run:
     workflows:
-      - "MLOps CI"
+      - MLOps CI
     types:
       - completed
 
@@ -13,45 +13,38 @@ permissions:
 jobs:
   deploy:
     name: Build, Scan and Deploy
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
-
-      # 1. Checkout exact commit that passed CI
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      # 3. Install dependencies
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      # 4. Build Docker image
       - name: Build Docker Image
         run: |
           docker build \
             --tag iris-mlops-api:latest \
             .
 
-      # 5. Verify Docker image
       - name: Verify Docker Image
         run: |
           docker image inspect iris-mlops-api:latest
           docker images iris-mlops-api:latest
 
-      # 6. Trivy image scan
       - name: Trivy Image Scan
         run: |
           mkdir -p security/trivy
@@ -65,7 +58,6 @@ jobs:
             --format table \
             iris-mlops-api:latest
 
-      # 7. Generate Trivy JSON report
       - name: Generate Trivy JSON Report
         if: always()
         run: |
@@ -80,10 +72,8 @@ jobs:
             --output /reports/iris-mlops-api.json \
             iris-mlops-api:latest
 
-          echo "===== TRIVY REPORT ====="
           ls -lah security/trivy/
 
-      # 8. Upload Trivy report
       - name: Upload Trivy Report
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,7 +82,6 @@ jobs:
           path: security/trivy/iris-mlops-api.json
           if-no-files-found: warn
 
-      # 9. Start application container
       - name: Deploy Container
         run: |
           docker stop iris-api 2>/dev/null || true
@@ -103,15 +92,12 @@ jobs:
             -p 8000:8000 \
             iris-mlops-api:latest
 
-      # 10. Wait for API
       - name: Wait for Application
         run: |
           echo "Waiting for Iris API..."
 
           for i in {1..20}; do
-            if curl --fail --silent \
-              http://127.0.0.1:8000/health; then
-
+            if curl --fail --silent http://127.0.0.1:8000/health; then
               echo ""
               echo "Iris API is ready."
               exit 0
@@ -122,19 +108,13 @@ jobs:
           done
 
           echo "ERROR: Iris API failed to start."
-
           docker ps -a
           docker logs iris-api || true
-
           exit 1
 
-      # 11. Health check
       - name: Health Check
         run: |
-          echo "Checking /health..."
-
-          response=$(curl --fail --silent \
-            http://127.0.0.1:8000/health)
+          response=$(curl --fail --silent http://127.0.0.1:8000/health)
 
           echo "$response"
 
@@ -143,11 +123,8 @@ jobs:
 
           echo "Health check passed."
 
-      # 12. Prediction test
       - name: Prediction API Check
         run: |
-          echo "Testing /predict..."
-
           response=$(curl --fail --silent \
             -X POST \
             http://127.0.0.1:8000/predict \
@@ -160,7 +137,6 @@ jobs:
 
           echo "Prediction test passed."
 
-      # 13. OWASP ZAP baseline scan
       - name: OWASP ZAP Baseline Scan
         if: always()
         run: |
@@ -176,10 +152,8 @@ jobs:
             -J /zap/wrk/zap-report.json \
             -I
 
-          echo "===== ZAP REPORT FILES ====="
           ls -lah security/zap/
 
-      # 14. Upload ZAP reports
       - name: Upload ZAP Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -190,24 +164,15 @@ jobs:
             security/zap/zap-report.json
           if-no-files-found: warn
 
-      # 15. Show container status and logs
       - name: Container Status
         if: always()
         run: |
-          echo "===== DOCKER CONTAINERS ====="
           docker ps -a
-
-          echo ""
           echo "===== APPLICATION LOGS ====="
           docker logs iris-api || true
 
-      # 16. Cleanup
       - name: Cleanup Application Container
         if: always()
         run: |
-          echo "Cleaning up application container..."
-
           docker stop iris-api 2>/dev/null || true
           docker rm iris-api 2>/dev/null || true
-
-          echo "Cleanup completed."
